@@ -1,16 +1,52 @@
-# fashion_tech_mvp
+# Outfit Generator POC
 
-A new Flutter project.
+Fast Flutter proof of concept:
 
-## Getting Started
+- choose 1-5 clothing photos
+- send them to a local Gemini proxy
+- generate one realistic full-body outfit photo
 
-This project is a starting point for a Flutter application.
+Run the local Gemini image proxy:
 
-A few resources to get you started if this is your first Flutter project:
+```sh
+GEMINI_API_KEY=your_key_here node tooling/ai_proxy.mjs
+```
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+The default image model is `gemini-3.1-flash-image-preview`, with fallbacks to `gemini-2.5-flash-image` and `gemini-3-pro-image-preview`.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+Run Flutter web:
+
+```sh
+flutter run -d web-server --web-hostname 127.0.0.1 --web-port 5080
+```
+
+Run mobile:
+
+```sh
+# iOS simulator on the same Mac
+flutter run -d ios --dart-define=AI_PROXY_URL=http://127.0.0.1:8787/api/analyze-outfit
+
+# Android emulator
+flutter run -d android --dart-define=AI_PROXY_URL=http://10.0.2.2:8787/api/analyze-outfit
+
+# Physical phone on the same Wi-Fi as the Mac
+flutter run -d <device-id> --dart-define=AI_PROXY_URL=http://YOUR_MAC_IP:8787/api/analyze-outfit
+```
+
+For a physical phone, there is also a helper:
+
+```sh
+chmod +x tooling/run_phone.sh
+tooling/run_phone.sh <device-id>
+```
+
+It reads the current Mac LAN IP and passes the correct `AI_PROXY_URL` automatically.
+
+After adding or changing native plugins such as image picking, stop the app fully and run:
+
+```sh
+flutter pub get
+flutter run
+```
+
+Hot restart is not enough to register native plugins.

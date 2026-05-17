@@ -1,0 +1,7 @@
+{
+    "name": "ai-proxy",
+    "type": "module",
+    "scripts": {
+        "start": "node ai_proxy.mjs"
+    }
+}
