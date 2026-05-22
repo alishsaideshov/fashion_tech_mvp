@@ -37,3 +37,28 @@ Future<List<AiImageInput>> pickGarmentImages() async {
 
   return results;
 }
+
+Future<AiImageInput?> pickSingleImage() async {
+  final picker = ImagePicker();
+  final picked = await picker.pickImage(
+    source: ImageSource.gallery,
+    imageQuality: 85,
+  );
+
+  if (picked == null) return null;
+
+  final bytes = await picked.readAsBytes();
+  final ext = picked.name.split('.').last.toLowerCase();
+  final mimeType = switch (ext) {
+    'png' => 'image/png',
+    'webp' => 'image/webp',
+    'gif' => 'image/gif',
+    _ => 'image/jpeg',
+  };
+
+  return AiImageInput(
+    name: picked.name,
+    mimeType: mimeType,
+    base64Data: base64Encode(bytes),
+  );
+}

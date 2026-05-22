@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('Outfit generator renders and starts generation', (tester) async {
+  testWidgets('AI stylist lookbook renders and starts generation', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(1400, 1100);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -11,13 +13,19 @@ void main() {
 
     await tester.pumpWidget(const FashionAiPocApp());
 
-    expect(find.text('Outfit Generator'), findsOneWidget);
-    expect(find.text('Selected clothes'), findsOneWidget);
-    expect(find.text('Outfit photo'), findsOneWidget);
-    expect(find.text('Generate outfit photo'), findsOneWidget);
+    expect(find.text('AI Stylist Lookbook'), findsOneWidget);
+    expect(find.text('Person'), findsOneWidget);
+    expect(find.text('Wardrobe'), findsOneWidget);
+    expect(find.text('Style variations'), findsOneWidget);
+    expect(find.text('Generated lookbook'), findsOneWidget);
+    expect(find.text('Generate lookbook'), findsOneWidget);
 
-    await tester.tap(find.text('Generate outfit photo'));
+    final generateButton = find.text('Generate lookbook');
+    await tester.ensureVisible(generateButton);
+    await tester.pumpAndSettle();
+    await tester.tap(generateButton);
     await tester.pump(const Duration(seconds: 3));
+
     expect(find.text('Generation error'), findsOneWidget);
   });
 }

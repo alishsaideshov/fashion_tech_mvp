@@ -1,10 +1,19 @@
-# Outfit Generator POC
+# AI Stylist Lookbook POC
 
-Fast Flutter proof of concept:
+Lightweight concept demo:
 
-- choose 1-5 clothing photos
-- send them to a local Gemini proxy
-- generate one realistic full-body outfit photo
+- upload a person / face reference photo
+- upload 1-5 wardrobe item photos
+- choose 1-5 style presets
+- generate a stylized lookbook with multiple outfit variations
+
+Default styles:
+
+- casual
+- smart casual
+- old money
+- monochrome
+- minimal fashion
 
 Run the local Gemini image proxy:
 
@@ -12,7 +21,30 @@ Run the local Gemini image proxy:
 GEMINI_API_KEY=your_key_here node tooling/ai_proxy.mjs
 ```
 
-The default image model is `gemini-3.1-flash-image-preview`, with fallbacks to `gemini-2.5-flash-image` and `gemini-3-pro-image-preview`.
+The proxy generates one image per selected style and returns a `looks` array.
+The default image model is `gemini-2.5-flash-image`, with fallbacks to `gemini-3-pro-image-preview` and the older `gemini-2.0-flash-preview-image-generation`.
+You can override it if your key has access to another image model:
+
+```sh
+GEMINI_API_KEY=your_key_here GEMINI_IMAGE_MODEL=gemini-3-pro-image-preview node tooling/ai_proxy.mjs
+```
+
+Railway deployment:
+
+- deploy this repo as a Node service
+- start command: `npm start`
+- set env var: `GEMINI_API_KEY=your_key_here`
+- Railway provides `PORT` automatically, the proxy reads it
+- health check URL: `https://YOUR_RAILWAY_DOMAIN/health`
+- generation URL: `https://YOUR_RAILWAY_DOMAIN/api/analyze-outfit`
+
+Build APK for other people with the Railway URL baked in:
+
+```sh
+flutter build apk --debug --dart-define=AI_PROXY_URL=https://YOUR_RAILWAY_DOMAIN/api/analyze-outfit
+```
+
+The app already includes demo person/clothes assets, so testers can press Generate lookbook without uploading anything.
 
 Run Flutter web:
 
@@ -33,14 +65,11 @@ flutter run -d android --dart-define=AI_PROXY_URL=http://10.0.2.2:8787/api/analy
 flutter run -d <device-id> --dart-define=AI_PROXY_URL=http://YOUR_MAC_IP:8787/api/analyze-outfit
 ```
 
-For a physical phone, there is also a helper:
+For a physical phone:
 
 ```sh
-chmod +x tooling/run_phone.sh
 tooling/run_phone.sh <device-id>
 ```
-
-It reads the current Mac LAN IP and passes the correct `AI_PROXY_URL` automatically.
 
 After adding or changing native plugins such as image picking, stop the app fully and run:
 

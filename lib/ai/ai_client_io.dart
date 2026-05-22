@@ -6,6 +6,8 @@ import 'ai_validation_models.dart';
 Future<AiValidationResult> runAiValidation({
   required int route,
   required List<AiImageInput> images,
+  AiImageInput? personImage,
+  List<String>? styles,
 }) async {
   final stopwatch = Stopwatch()..start();
 
@@ -19,9 +21,11 @@ Future<AiValidationResult> runAiValidation({
           body: jsonEncode({
             'route': route == 1 ? 'ghost_fit' : 'human_fit',
             'images': images.map((image) => image.toJson()).toList(),
+            if (personImage != null) 'personImage': personImage.toJson(),
+            if (styles != null) 'styles': styles,
           }),
         )
-        .timeout(const Duration(seconds: 60));
+        .timeout(const Duration(minutes: 3));
   } on Exception catch (error) {
     final localhostHint = aiProxyUrl.contains('127.0.0.1')
         ? ' On a physical phone, 127.0.0.1 points to the phone itself. Re-run with your Mac LAN IP, for example --dart-define=AI_PROXY_URL=http://192.168.x.x:8787/api/analyze-outfit.'

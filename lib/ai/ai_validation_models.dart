@@ -27,9 +27,15 @@ class AiValidationResult {
     required this.limitations,
     required this.generatedImageDataUrl,
     required this.model,
+    required this.looks,
   });
 
   factory AiValidationResult.fromJson(Map<String, Object?> json) {
+    final looks = (json['looks'] as List<dynamic>? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .map(StyleLook.fromJson)
+        .toList();
+
     return AiValidationResult(
       summary: json['summary'] as String? ?? 'No summary returned.',
       prompt: json['prompt'] as String? ?? 'No prompt returned.',
@@ -40,6 +46,7 @@ class AiValidationResult {
           .toList(),
       generatedImageDataUrl: json['generatedImageDataUrl'] as String?,
       model: json['model'] as String? ?? 'unknown',
+      looks: looks,
     );
   }
 
@@ -50,4 +57,32 @@ class AiValidationResult {
   final List<String> limitations;
   final String? generatedImageDataUrl;
   final String model;
+  final List<StyleLook> looks;
+}
+
+@immutable
+class StyleLook {
+  const StyleLook({
+    required this.style,
+    required this.imageDataUrl,
+    required this.prompt,
+    required this.model,
+    required this.latencyMs,
+  });
+
+  factory StyleLook.fromJson(Map<String, Object?> json) {
+    return StyleLook(
+      style: json['style'] as String? ?? 'Look',
+      imageDataUrl: json['imageDataUrl'] as String? ?? '',
+      prompt: json['prompt'] as String? ?? '',
+      model: json['model'] as String? ?? 'unknown',
+      latencyMs: json['latencyMs'] as int? ?? 0,
+    );
+  }
+
+  final String style;
+  final String imageDataUrl;
+  final String prompt;
+  final String model;
+  final int latencyMs;
 }
