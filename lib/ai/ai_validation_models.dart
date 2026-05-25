@@ -31,10 +31,24 @@ class AiValidationResult {
   });
 
   factory AiValidationResult.fromJson(Map<String, Object?> json) {
+    final generatedImageDataUrl = json['generatedImageDataUrl'] as String?;
     final looks = (json['looks'] as List<dynamic>? ?? const [])
         .whereType<Map<String, dynamic>>()
         .map(StyleLook.fromJson)
         .toList();
+    if (looks.isEmpty &&
+        generatedImageDataUrl != null &&
+        generatedImageDataUrl.isNotEmpty) {
+      looks.add(
+        StyleLook(
+          style: json['style'] as String? ?? 'Generated look',
+          imageDataUrl: generatedImageDataUrl,
+          prompt: json['prompt'] as String? ?? '',
+          model: json['model'] as String? ?? 'unknown',
+          latencyMs: json['latencyMs'] as int? ?? 0,
+        ),
+      );
+    }
 
     return AiValidationResult(
       summary: json['summary'] as String? ?? 'No summary returned.',
@@ -44,7 +58,7 @@ class AiValidationResult {
       limitations: (json['limitations'] as List<dynamic>? ?? const [])
           .whereType<String>()
           .toList(),
-      generatedImageDataUrl: json['generatedImageDataUrl'] as String?,
+      generatedImageDataUrl: generatedImageDataUrl,
       model: json['model'] as String? ?? 'unknown',
       looks: looks,
     );

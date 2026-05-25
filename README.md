@@ -4,7 +4,7 @@ Lightweight concept demo:
 
 - upload a person / face reference photo
 - upload 1-5 wardrobe item photos
-- choose 1-5 style presets
+- choose up to 3 style presets in fast demo mode
 - generate a stylized lookbook with multiple outfit variations
 
 Default styles:
@@ -21,12 +21,20 @@ Run the local Gemini image proxy:
 GEMINI_API_KEY=your_key_here node tooling/ai_proxy.mjs
 ```
 
-The proxy generates one image per selected style and returns a `looks` array.
+The proxy generates one image per selected style.
 The default image model is `gemini-2.5-flash-image`, with fallbacks to `gemini-3-pro-image-preview` and the older `gemini-2.0-flash-preview-image-generation`.
+For stability, explicitly selected app styles are always processed up to 3 styles, even if `MAX_LOOKS=1` is still set in Railway.
+Generation runs style-by-style so Gemini rate limits do not kill the remaining styles after the first image.
 You can override it if your key has access to another image model:
 
 ```sh
 GEMINI_API_KEY=your_key_here GEMINI_IMAGE_MODEL=gemini-3-pro-image-preview node tooling/ai_proxy.mjs
+```
+
+Optional default volume knob when no styles are sent:
+
+```sh
+MAX_LOOKS=3 GEMINI_API_KEY=your_key_here node tooling/ai_proxy.mjs
 ```
 
 Railway deployment:
@@ -45,6 +53,12 @@ flutter build apk --debug --dart-define=AI_PROXY_URL=https://YOUR_RAILWAY_DOMAIN
 ```
 
 The app already includes demo person/clothes assets, so testers can press Generate lookbook without uploading anything.
+If Railway/Gemini fails, the APK shows bundled fallback lookbook images and prints the real error in the UI.
+Disable that behavior only when debugging strict AI output:
+
+```sh
+flutter build apk --debug --dart-define=DEMO_FALLBACK_ON_ERROR=false
+```
 
 Run Flutter web:
 

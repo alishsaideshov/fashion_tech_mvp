@@ -42,43 +42,18 @@ class LookbookPage extends StatefulWidget {
 }
 
 class _LookbookPageState extends State<LookbookPage> {
-  final Set<String> _selectedStyles = {..._stylePresets};
+  final Set<String> _selectedStyles = {
+    'casual',
+    'old money',
+    'minimal fashion',
+  };
 
   bool _isGenerating = false;
   AiValidationResult? _result;
   String? _error;
-  String _status =
-      'Ready. If you upload nothing, the app uses bundled demo person and clothes.';
+  String _status = 'Upload a person photo and clothes to get started.';
   AiImageInput? _personImage;
   List<AiImageInput>? _garmentImages;
-
-  Future<AiImageInput> _loadDemoPerson() async {
-    final data = await rootBundle.load('assets/demo/face_generation_ref.png');
-    return AiImageInput(
-      name: 'Demo person reference',
-      mimeType: 'image/png',
-      base64Data: base64Encode(data.buffer.asUint8List()),
-    );
-  }
-
-  Future<List<AiImageInput>> _loadGarments() async {
-    if (_garmentImages != null && _garmentImages!.isNotEmpty) {
-      return _garmentImages!;
-    }
-
-    final inputs = <AiImageInput>[];
-    for (final item in _demoGarments) {
-      final data = await rootBundle.load(item.asset);
-      inputs.add(
-        AiImageInput(
-          name: item.name,
-          mimeType: 'image/jpeg',
-          base64Data: base64Encode(data.buffer.asUint8List()),
-        ),
-      );
-    }
-    return inputs;
-  }
 
   Future<void> _pickPerson() async {
     try {
@@ -117,49 +92,179 @@ class _LookbookPageState extends State<LookbookPage> {
   Future<void> _generateLookbook() async {
     if (_isGenerating) return;
 
+    if (_personImage == null) {
+      setState(() {
+        _error = 'Please upload a person photo first.';
+        _status = 'No person photo uploaded.';
+      });
+      return;
+    }
+
     setState(() {
       _isGenerating = true;
       _result = null;
       _error = null;
-      _status = 'Preparing demo/user inputs...';
+      _status = 'Preparing inputs...';
     });
 
+    final styles = _selectedStyles.toList();
+    final looksByStyle = _pendingLooksForStyles(styles);
+    var generatedCount = 0;
+
     try {
-      final person = _personImage ?? await _loadDemoPerson();
-      final garments = await _loadGarments();
-      final styles = _selectedStyles.toList();
-      if (!mounted) return;
       setState(() {
-        _status =
-            'Sending ${garments.length} clothes + person reference to AI proxy. Styles: ${styles.map(_styleLabel).join(', ')}.';
+        _result = AiValidationResult(
+          looks: _orderedLooksForStyles(
+            looksByStyle: looksByStyle,
+            styles: styles,
+          ),
+          latencyMs: 0,
+          summary: 'Waiting for AI generated looks.',
+          prompt: '',
+          qualityScore: '',
+          limitations: const [],
+          generatedImageDataUrl: null,
+          model: 'pending',
+        );
+        _status = 'Generating ${styles.length} AI looks...';
       });
+
+      if (_personImage == null) {
+        setState(() {
+          _error = 'Please upload a person photo first.';
+          _status = 'No person photo uploaded.';
+          _isGenerating = false;
+        });
+        return;
+      }
+
+      final person = _personImage!;
+      final garments = _garmentImages ?? [];
+      if (!mounted) return;
+      setState(() => _status = 'Generating ${styles.length} looks...');
 
       final result = await runAiValidation(
         route: 0,
         images: garments,
         personImage: person,
         styles: styles,
+        onLookReady: (look) {
+          if (!mounted) return;
+          generatedCount += 1;
+          _mergeLookForStyles(
+            looksByStyle: looksByStyle,
+            styles: styles,
+            look: look,
+          );
+          final mergedLooks = _orderedLooksForStyles(
+            looksByStyle: looksByStyle,
+            styles: styles,
+          );
+          setState(() {
+            _result = AiValidationResult(
+              looks: List.unmodifiable(mergedLooks),
+              latencyMs: 0,
+              summary: '',
+              prompt: '',
+              qualityScore: '',
+              limitations: const [],
+              generatedImageDataUrl: null,
+              model: look.model,
+            );
+            _status = 'Generated $generatedCount of ${styles.length} looks...';
+          });
+        },
       );
+
       if (!mounted) return;
+      for (final look in result.looks) {
+        _mergeLookForStyles(
+          looksByStyle: looksByStyle,
+          styles: styles,
+          look: look,
+        );
+      }
+      final finalLooks = _orderedLooksForStyles(
+        looksByStyle: looksByStyle,
+        styles: styles,
+      );
+      if (finalLooks.isEmpty) {
+        throw StateError(
+          'AI proxy returned 200 but no image looks. Check Railway logs for "Gemini returned no image output".',
+        );
+      }
       setState(() {
-        _result = result;
+        _result = AiValidationResult(
+          looks: List.unmodifiable(finalLooks),
+          latencyMs: result.latencyMs,
+          summary: result.summary,
+          prompt: result.prompt,
+          qualityScore: result.qualityScore,
+          limitations: result.limitations,
+          generatedImageDataUrl: result.generatedImageDataUrl,
+          model: result.model,
+        );
         _status =
-            'Done. Generated ${result.looks.length} looks in ${(result.latencyMs / 1000).toStringAsFixed(1)}s.';
+            'Done. $generatedCount generated, ${finalLooks.length} style tiles shown.';
       });
     } on Object catch (error) {
-      debugPrint('Lookbook generation error: $error');
       if (!mounted) return;
       final message = _formatError(error);
       setState(() {
         _error = message;
-        _status = 'Generation failed. See error below.';
+        _status = 'Generation failed.';
       });
-      _showSnack(message);
-    } finally {
-      if (mounted) {
-        setState(() => _isGenerating = false);
-      }
     }
+  }
+
+  Map<String, StyleLook> _pendingLooksForStyles(List<String> styles) {
+    return {
+      for (final style in styles)
+        _styleKey(style): StyleLook(
+          style: style,
+          imageDataUrl: '',
+          prompt: 'Waiting for AI generation.',
+          model: 'pending',
+          latencyMs: 0,
+        ),
+    };
+  }
+
+  void _mergeLookForStyles({
+    required Map<String, StyleLook> looksByStyle,
+    required List<String> styles,
+    required StyleLook look,
+  }) {
+    final matchingStyle = styles.cast<String?>().firstWhere(
+      (style) => style != null && _styleKey(style) == _styleKey(look.style),
+      orElse: () => styles.isEmpty ? look.style : styles.first,
+    );
+    final style = matchingStyle ?? look.style;
+    looksByStyle[_styleKey(style)] = StyleLook(
+      style: style,
+      imageDataUrl: look.imageDataUrl,
+      prompt: look.prompt,
+      model: look.model,
+      latencyMs: look.latencyMs,
+    );
+  }
+
+  List<StyleLook> _orderedLooksForStyles({
+    required Map<String, StyleLook> looksByStyle,
+    required List<String> styles,
+  }) {
+    final ordered = <StyleLook>[];
+    for (final style in styles) {
+      final look = looksByStyle[_styleKey(style)];
+      if (look != null) ordered.add(look);
+    }
+    for (final entry in looksByStyle.entries) {
+      final isAlreadyIncluded = styles.any(
+        (style) => _styleKey(style) == entry.key,
+      );
+      if (!isAlreadyIncluded) ordered.add(entry.value);
+    }
+    return ordered;
   }
 
   String _formatError(Object error) {
@@ -173,8 +278,10 @@ class _LookbookPageState extends State<LookbookPage> {
     setState(() {
       if (_selectedStyles.contains(style)) {
         if (_selectedStyles.length > 1) _selectedStyles.remove(style);
-      } else if (_selectedStyles.length < 5) {
+      } else if (_selectedStyles.length < 3) {
         _selectedStyles.add(style);
+      } else {
+        _status = 'Fast demo mode keeps generation to 3 looks.';
       }
       _result = null;
       _error = null;
@@ -338,7 +445,7 @@ class _ControlPanel extends StatelessWidget {
           const _PanelTitle(icon: Icons.face_outlined, title: 'Person'),
           const SizedBox(height: 12),
           if (personImage == null)
-            const _DemoPersonTile()
+            const _EmptyUploadHint(text: 'No photo uploaded yet')
           else
             _ImageTile(image: personImage!),
           const SizedBox(height: 10),
@@ -362,10 +469,7 @@ class _ControlPanel extends StatelessWidget {
               if (image != garmentImages!.last) const SizedBox(height: 10),
             ]
           else
-            for (final garment in _demoGarments) ...[
-              _GarmentTile(item: garment),
-              if (garment != _demoGarments.last) const SizedBox(height: 10),
-            ],
+            const _EmptyUploadHint(text: 'No clothes uploaded yet'),
           const SizedBox(height: 10),
           SizedBox(
             width: double.infinity,
@@ -464,25 +568,40 @@ class _LookbookPanel extends StatelessWidget {
             title: 'Generated lookbook',
           ),
           const SizedBox(height: 16),
-          if (isGenerating)
-            _GeneratingGrid(styles: selectedStyles.toList())
-          else if (error != null)
-            _StateBox(
-              icon: Icons.error_outline,
-              title: 'Generation error',
-              body: error!,
-              color: _rust,
-            )
-          else if (looks.isEmpty)
+          if (looks.isNotEmpty) ...[
+            LookList(looks: looks),
+            if (isGenerating) ...[
+              const SizedBox(height: 12),
+              _StateBox(
+                icon: Icons.hourglass_top,
+                title: 'Real AI still running',
+                body:
+                    'Preview images are visible now. They will be replaced if the AI returns generated looks.',
+                color: _teal,
+              ),
+            ],
+          ] else if (isGenerating) ...[
+            _GeneratingGrid(styles: selectedStyles.toList()),
+          ] else ...[
+            if (error != null) ...[
+              _StateBox(
+                icon: Icons.error_outline,
+                title: looks.isEmpty
+                    ? 'Generation error'
+                    : 'AI error, demo fallback shown',
+                body: error!,
+                color: _rust,
+              ),
+              if (looks.isNotEmpty) const SizedBox(height: 12),
+            ],
             const _StateBox(
               icon: Icons.auto_awesome_outlined,
               title: 'No lookbook yet',
               body:
                   'Upload a person photo and wardrobe items, then generate styled variations.',
               color: _muted,
-            )
-          else
-            _LookGrid(looks: looks),
+            ),
+          ],
         ],
       ),
     );
@@ -554,8 +673,8 @@ class _GeneratingCard extends StatelessWidget {
   }
 }
 
-class _LookGrid extends StatelessWidget {
-  const _LookGrid({required this.looks});
+class LookList extends StatelessWidget {
+  const LookList({super.key, required this.looks});
 
   final List<StyleLook> looks;
 
@@ -563,21 +682,10 @@ class _LookGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final columns = constraints.maxWidth >= 980
-            ? 4
-            : constraints.maxWidth >= 660
-            ? 3
-            : 2;
-        return GridView.builder(
+        return ListView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           itemCount: looks.length,
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: columns,
-            mainAxisSpacing: 10,
-            crossAxisSpacing: 10,
-            childAspectRatio: 0.66,
-          ),
           itemBuilder: (context, index) {
             return _LookCard(look: looks[index]);
           },
@@ -594,7 +702,10 @@ class _LookCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final imageBytes = _tryDecodeDataUrl(look.imageDataUrl);
+
     return Container(
+      margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(8),
@@ -602,18 +713,30 @@ class _LookCard extends StatelessWidget {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Expanded(
-            child: ClipRRect(
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(8),
-              ),
-              child: SizedBox.expand(
-                child: Image.memory(
-                  _decodeDataUrl(look.imageDataUrl),
-                  fit: BoxFit.cover,
+          ClipRRect(
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+            child: Stack(
+              children: [
+                imageBytes == null
+                    ? SizedBox(
+                        height: 300,
+                        child: _ImageEmptyState(
+                          isPending: look.model == 'pending',
+                        ),
+                      )
+                    : Image.memory(
+                        imageBytes,
+                        width: double.infinity,
+                        fit: BoxFit.fitWidth,
+                      ),
+                Positioned(
+                  left: 10,
+                  top: 10,
+                  child: _StylePhotoTile(label: _styleLabel(look.style)),
                 ),
-              ),
+              ],
             ),
           ),
           Padding(
@@ -645,33 +768,76 @@ class _LookCard extends StatelessWidget {
   }
 }
 
-class _DemoPersonTile extends StatelessWidget {
-  const _DemoPersonTile();
+class _EmptyUploadHint extends StatelessWidget {
+  const _EmptyUploadHint({required this.text});
+  final String text;
 
   @override
   Widget build(BuildContext context) {
-    return _TileShell(
-      image: Image.asset(
-        'assets/demo/face_generation_ref.png',
-        fit: BoxFit.cover,
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _cream,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _border),
       ),
-      title: 'Demo person reference',
-      subtitle: 'upload your photo for stronger client demo',
+      child: Text(
+        text,
+        textAlign: TextAlign.center,
+        style: Theme.of(
+          context,
+        ).textTheme.bodySmall?.copyWith(color: _muted, letterSpacing: 0),
+      ),
     );
   }
 }
 
-class _GarmentTile extends StatelessWidget {
-  const _GarmentTile({required this.item});
+class _StylePhotoTile extends StatelessWidget {
+  const _StylePhotoTile({required this.label});
 
-  final GarmentItem item;
+  final String label;
 
   @override
   Widget build(BuildContext context) {
-    return _TileShell(
-      image: Image.asset(item.asset, fit: BoxFit.cover),
-      title: item.name,
-      subtitle: item.note,
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.68),
+        borderRadius: BorderRadius.circular(7),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+        child: Text(
+          label,
+          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+            color: Colors.white,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 0,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ImageEmptyState extends StatelessWidget {
+  const _ImageEmptyState({required this.isPending});
+
+  final bool isPending;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(color: _cream),
+      child: Center(
+        child: isPending
+            ? const SizedBox(
+                width: 30,
+                height: 30,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Icon(Icons.broken_image_outlined, color: _rust, size: 34),
+      ),
     );
   }
 }
@@ -715,7 +881,7 @@ class _TileShell extends StatelessWidget {
         children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(6),
-            child: SizedBox(width: 76, height: 76, child: image),
+            child: SizedBox(width: 110, height: 110, child: image),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -1011,8 +1177,14 @@ String _styleLabel(String style) {
       .join(' ');
 }
 
-Uint8List _decodeDataUrl(String value) {
-  return Uri.parse(value).data!.contentAsBytes();
+String _styleKey(String style) => style.trim().toLowerCase();
+
+Uint8List? _tryDecodeDataUrl(String value) {
+  try {
+    return Uri.parse(value).data?.contentAsBytes();
+  } on Object {
+    return null;
+  }
 }
 
 Uint8List _decodeBase64(String value) {
@@ -1038,24 +1210,6 @@ const _stylePresets = [
   'old money',
   'monochrome',
   'minimal fashion',
-];
-
-const _demoGarments = [
-  GarmentItem(
-    name: 'Brown knit sweater',
-    note: 'warm brown knit',
-    asset: 'assets/demo/input_sweater.jpg',
-  ),
-  GarmentItem(
-    name: 'Relaxed blue denim',
-    note: 'washed denim',
-    asset: 'assets/demo/input_jeans.jpg',
-  ),
-  GarmentItem(
-    name: 'Black sneakers',
-    note: 'black low-top sneakers',
-    asset: 'assets/demo/input_sneakers.jpg',
-  ),
 ];
 
 const _background = Color(0xFFF5F1EA);

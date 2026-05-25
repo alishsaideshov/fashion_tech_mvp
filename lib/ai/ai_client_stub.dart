@@ -5,8 +5,7 @@ Future<AiValidationResult> runAiValidation({
   required List<AiImageInput> images,
   AiImageInput? personImage,
   List<String>? styles,
-}) {
-  throw UnsupportedError(
-    'Real AI validation is available in Flutter web via the local dev proxy.',
-  );
+  void Function(StyleLook look)? onLookReady,
+}) async {
+  throw UnsupportedError('No AI client available for this platform.');
 }

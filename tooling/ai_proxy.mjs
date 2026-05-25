@@ -4,14 +4,16 @@ const port = Number(process.env.PORT || process.env.AI_PROXY_PORT || 8787);
 const host = process.env.AI_PROXY_HOST || '0.0.0.0';
 const preferredImageModel =
   process.env.GEMINI_IMAGE_MODEL || 'gemini-2.5-flash-image';
+const defaultMaxLooks = Number(process.env.MAX_LOOKS || 3);
+const requestedStyleLimit = 3;
 const apiKey = process.env.GEMINI_API_KEY;
 
 const defaultStyles = [
   'casual',
-  'smart casual',
   'old money',
-  'monochrome',
   'minimal fashion',
+  'smart casual',
+  'monochrome',
 ];
 
 const styleDirections = {
@@ -25,6 +27,19 @@ const styleDirections = {
     'monochrome fashion look, cohesive single-tone palette, strong silhouette, editorial but realistic',
   'minimal fashion':
     'minimal fashion look, clean shapes, neutral palette, no visual clutter, modern lookbook styling',
+};
+
+const styleOutfitRules = {
+  casual:
+    'Use a relaxed casual outfit. It may reference the brown knit, denim, and sneakers, but restyle the fit and pose so it feels like a fresh casual look.',
+  'smart casual':
+    'Create smart casual styling: tailored overshirt or clean knit, pressed trousers or dark denim, refined shoes. Avoid a streetwear-only sneaker look.',
+  'old money':
+    'Create a visibly old money look: cream or ivory pleated trousers, navy/charcoal polo or fine cardigan, loafers or minimal leather shoes, quiet luxury. Do not reuse the brown sweater + blue ripped jeans outfit.',
+  monochrome:
+    'Create a monochrome look: one cohesive black/white/grey palette, strong silhouette, no blue denim, no brown sweater. Keep it editorial but wearable.',
+  'minimal fashion':
+    'Create a minimal fashion look: clean white/black/stone palette, plain tee or overshirt, relaxed tailored trousers, minimal sneakers or loafers. Do not reuse the casual sweater/jeans combination.',
 };
 
 const corsHeaders = {
@@ -46,6 +61,8 @@ const server = http.createServer(async (request, response) => {
       route: '/api/analyze-outfit',
       apiKeyConfigured: Boolean(apiKey),
       defaultModel: preferredImageModel,
+      defaultMaxLooks,
+      requestedStyleLimit,
       styles: defaultStyles,
     });
     return;
@@ -80,72 +97,107 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
-    const looks = [];
-    let modelUsed = preferredImageModel;
+    // SSE headers — stream each look as it finishes
+    response.writeHead(200, {
+      ...corsHeaders,
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    });
+    const heartbeat = setInterval(() => {
+      response.write(': ping\n\n');
+    }, 15000);
 
-    for (const style of styles) {
-      const lookStartedAt = Date.now();
-      const prompt = buildLookbookPrompt({
-        style,
-        hasPerson: Boolean(personImage),
-        garmentCount: garments.length,
-      });
-      const parts = [
-        { text: prompt },
-        ...(personImage ? [toInlineImage(personImage)] : []),
-        ...garments.map(toInlineImage),
-      ];
+    let completed = 0;
+    const failures = [];
 
-      const { payload, model } = await generateWithFallback(parts);
-      modelUsed = model;
-
-      if (payload.error) {
-        sendJson(response, payload.status || 500, {
-          error: payload.error,
-          style,
-        });
-        return;
+    try {
+      for (const style of styles) {
+        response.write(`data: ${JSON.stringify({ type: 'started', style })}\n\n`);
+        try {
+          const look = await generateLook({ style, personImage, garments });
+          completed++;
+          console.log(`[lookbook] look done style=${style} latencyMs=${look.latencyMs}`);
+          response.write(`data: ${JSON.stringify({ type: 'look', look })}\n\n`);
+        } catch (err) {
+          const message = err.message || String(err);
+          failures.push(`${style}: ${message}`);
+          console.error(`[lookbook] look failed style=${style}`, message);
+          response.write(`data: ${JSON.stringify({ type: 'error', style, message })}\n\n`);
+        }
       }
-
-      const generatedImage = extractGeneratedImage(payload);
-      if (!generatedImage) {
-        sendJson(response, 502, {
-          error: `Gemini returned no image output for ${style}.`,
-        });
-        return;
-      }
-
-      looks.push({
-        style,
-        prompt,
-        model,
-        latencyMs: Date.now() - lookStartedAt,
-        imageDataUrl: `data:${generatedImage.mimeType};base64,${generatedImage.data}`,
-      });
+    } finally {
+      clearInterval(heartbeat);
     }
 
     const latencyMs = Date.now() - startedAt;
-    console.log(`[lookbook] success looks=${looks.length} model=${modelUsed} latencyMs=${latencyMs}`);
+    console.log(`[lookbook] done requested=${styles.length} completed=${completed} failed=${failures.length} latencyMs=${latencyMs}`);
+    response.write(
+      `data: ${JSON.stringify({
+        type: 'done',
+        requested: styles.length,
+        count: completed,
+        failures,
+        latencyMs,
+      })}\n\n`,
+    );
+    response.end();
 
-    sendJson(response, 200, {
-      summary: `Generated ${looks.length} stylist lookbook variations.`,
-      prompt: 'AI stylist lookbook: user face/person reference + wardrobe items + style presets.',
-      qualityScore: 'lookbook',
-      limitations: [],
-      generatedImageDataUrl: looks[0]?.imageDataUrl || null,
-      model: modelUsed,
-      latencyMs,
-      looks,
-    });
   } catch (error) {
     console.error('[lookbook] failed', error);
-    sendJson(response, 500, { error: error.message || String(error) });
+    // If headers not sent yet, send JSON error; otherwise end the stream
+    if (!response.headersSent) {
+      sendJson(response, 500, { error: error.message || String(error) });
+    } else {
+      response.write(`data: ${JSON.stringify({ type: 'error', message: error.message })}\n\n`);
+      response.end();
+    }
   }
 });
+
+async function generateLook({ style, personImage, garments }) {
+  const lookStartedAt = Date.now();
+  const prompt = buildLookbookPrompt({
+    style,
+    hasPerson: Boolean(personImage),
+    garmentCount: garments.length,
+  });
+  const parts = [
+    { text: prompt },
+    ...(personImage ? [toInlineImage(personImage)] : []),
+    ...garments.map(toInlineImage),
+  ];
+
+  const { payload, model } = await generateWithFallback(parts);
+  if (payload.error) {
+    throw new Error(`${style}: ${payload.error}`);
+  }
+
+  const generatedImage = extractGeneratedImage(payload);
+  if (!generatedImage) throw new Error(`${style}: no image returned`);
+
+  return {
+    style,
+    prompt,
+    model,
+    latencyMs: Date.now() - lookStartedAt,
+    imageDataUrl: `data:${generatedImage.mimeType};base64,${generatedImage.data}`,
+  };
+}
+
+async function runInBatches(items, batchSize, worker) {
+  const results = [];
+  for (let index = 0; index < items.length; index += batchSize) {
+    const batch = items.slice(index, index + batchSize);
+    results.push(...(await Promise.allSettled(batch.map(worker))));
+  }
+  return results;
+}
 
 async function generateWithFallback(parts) {
   const candidates = [
     preferredImageModel,
+    'gemini-3.1-flash-image-preview',
     'gemini-3-pro-image-preview',
     'gemini-2.5-flash-image',
     'gemini-2.0-flash-preview-image-generation',
@@ -158,9 +210,17 @@ async function generateWithFallback(parts) {
       candidate,
       limitPartsForModel(parts, candidate, hasPersonReference),
     );
-    if (result.ok) return { payload: result.payload, model: candidate };
+    if (result.ok && extractGeneratedImage(result.payload)) {
+      return { payload: result.payload, model: candidate };
+    }
 
     const message = result.payload.error?.message || '';
+    if (result.ok) {
+      console.warn(
+        `[lookbook] model returned no image model=${candidate} text=${extractText(result.payload)}`,
+      );
+      continue;
+    }
     console.warn(`[lookbook] model failed model=${candidate} status=${result.status} message=${message}`);
     const shouldTryNextModel =
       result.status === 404 ||
@@ -183,9 +243,9 @@ async function generateWithFallback(parts) {
 
   return {
     payload: {
-      status: 404,
+      status: 502,
       error:
-        'No available Gemini image-generation model was found for this API key.',
+        'Gemini returned no image output for every configured image model.',
     },
     model: preferredImageModel,
   };
@@ -209,7 +269,7 @@ function limitPartsForModel(parts, model, hasPersonReference) {
   return parts;
 }
 
-async function generate(model, parts) {
+async function generate(model, parts, retries = 2) {
   const cleanModel = model.replace(/^models\//, '');
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${cleanModel}:generateContent?key=${apiKey}`;
   const response = await fetch(url, {
@@ -222,6 +282,15 @@ async function generate(model, parts) {
       },
     }),
   });
+
+  if ((response.status === 429 || response.status >= 500) && retries > 0) {
+    const delay = 2000 + Math.random() * 1000;
+    console.warn(
+      `[lookbook] ${response.status} temporary error, retrying in ${Math.round(delay)}ms (retries left: ${retries})`,
+    );
+    await new Promise(r => setTimeout(r, delay));
+    return generate(model, parts, retries - 1);
+  }
 
   return {
     ok: response.ok,
@@ -237,12 +306,25 @@ server.listen(port, host, () => {
 });
 
 function normalizeStyles(rawStyles) {
-  if (!Array.isArray(rawStyles)) return defaultStyles;
+  if (!Array.isArray(rawStyles)) {
+    const limit = Math.max(1, Math.min(defaultMaxLooks, requestedStyleLimit));
+    return defaultStyles.slice(0, limit);
+  }
+
+  const seen = new Set();
   const cleanStyles = rawStyles
     .map((style) => String(style || '').trim().toLowerCase())
     .filter(Boolean)
-    .slice(0, 5);
-  return cleanStyles.length > 0 ? cleanStyles : defaultStyles;
+    .filter((style) => {
+      if (seen.has(style)) return false;
+      seen.add(style);
+      return true;
+    })
+    .slice(0, requestedStyleLimit);
+
+  return cleanStyles.length > 0
+    ? cleanStyles
+    : defaultStyles.slice(0, requestedStyleLimit);
 }
 
 function toInlineImage(image) {
@@ -256,18 +338,24 @@ function toInlineImage(image) {
 
 function buildLookbookPrompt({ style, hasPerson, garmentCount }) {
   const direction = styleDirections[style] || `${style} fashion styling`;
+  const outfitRule =
+    styleOutfitRules[style] ||
+    `Create a clearly distinct ${style} outfit with a different silhouette, palette, and styling from the other styles.`;
   const personInstruction = hasPerson
-    ? 'Use the first image as the person/face identity reference. Preserve the person identity, face shape, hair, glasses, skin tone, and overall vibe as much as possible while making a new full-body fashion look.'
+    ? 'Use the FIRST IMAGE as a face/body identity reference ONLY. Extract ONLY: face shape, facial features, hair style and color, skin tone, body proportions. COMPLETELY IGNORE AND DO NOT REPRODUCE the clothing, outfit, or styling shown in the first image. Dress the person from scratch using only the style direction and outfit rule below.'
     : 'Create a realistic young adult model appropriate for the wardrobe references.';
   const garmentInstruction =
     garmentCount > 0
-      ? 'Use the remaining images as wardrobe inspiration. You may reinterpret, combine, recolor subtly, or add missing basics to create a fresh styled outfit. Do not copy the exact same look; create a new stylized variation.'
+      ? 'Use the remaining images as wardrobe inspiration only. You may reinterpret, combine, recolor, or add missing basics to satisfy the selected style. The final outfit must match the selected style more than it matches the source garments.'
       : 'Create the outfit from scratch based on the style direction.';
 
   return `
+CRITICAL: The person reference image shows a brown sweater and blue jeans. DO NOT reproduce this outfit for any style except "casual". For all other styles, create a completely different outfit from scratch.
+
 Generate one vertical full-body fashion lookbook photo for the style: ${style}.
 
 Style direction: ${direction}.
+Style-specific outfit requirement: ${outfitRule}.
 ${personInstruction}
 ${garmentInstruction}
 
@@ -275,8 +363,9 @@ Output requirements:
 - one single full-body person standing in a minimal warm studio with soft side daylight
 - editorial AI stylist / lookbook quality
 - realistic anatomy, realistic face, realistic clothing fit
-- preserve the person's face identity more than the exact outfit
-- create a fresh inspirational outfit variation, not the same outfit repeated
+- preserve the person's face identity, but change the outfit strongly for this style
+- create a fresh inspirational outfit variation unique to "${style}"
+- the outfit, palette, shoes, and silhouette must visibly differ from the casual brown sweater + blue jeans reference unless this style is casual
 - no collage, no split screen, no text, no UI, no labels, no extra people
 - clean neutral background, premium ecommerce/editorial mood
 `.trim();
@@ -295,6 +384,15 @@ function extractGeneratedImage(payload) {
   }
 
   return null;
+}
+
+function extractText(payload) {
+  const parts = payload.candidates?.[0]?.content?.parts || [];
+  return parts
+    .map((part) => part.text)
+    .filter(Boolean)
+    .join(' ')
+    .slice(0, 500);
 }
 
 function readJson(request) {
