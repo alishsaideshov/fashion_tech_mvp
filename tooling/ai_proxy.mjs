@@ -31,15 +31,15 @@ const styleDirections = {
 
 const styleOutfitRules = {
   casual:
-    'Use a relaxed casual outfit. It may reference the brown knit, denim, and sneakers, but restyle the fit and pose so it feels like a fresh casual look.',
+    'Use a relaxed casual outfit. It may reference uploaded wardrobe basics, but the result must still look like the exact uploaded person.',
   'smart casual':
-    'Create smart casual styling: tailored overshirt or clean knit, pressed trousers or dark denim, refined shoes. Avoid a streetwear-only sneaker look.',
+    'Create smart casual styling: tailored overshirt or clean knit, pressed trousers or dark denim, refined shoes. Avoid a streetwear-only sneaker look. Keep the uploaded person identity unchanged.',
   'old money':
-    'Create a visibly old money look: cream or ivory pleated trousers, navy/charcoal polo or fine cardigan, loafers or minimal leather shoes, quiet luxury. Do not reuse the brown sweater + blue ripped jeans outfit.',
+    'Create a visibly old money look: cream or ivory pleated trousers, navy/charcoal polo or fine cardigan, loafers or minimal leather shoes, quiet luxury. Do not reuse the source outfit from the person photo.',
   monochrome:
-    'Create a monochrome look: one cohesive black/white/grey palette, strong silhouette, no blue denim, no brown sweater. Keep it editorial but wearable.',
+    'Create a monochrome look: one cohesive black/white/grey palette, strong silhouette, no copied source outfit colors. Keep it editorial but wearable.',
   'minimal fashion':
-    'Create a minimal fashion look: clean white/black/stone palette, plain tee or overshirt, relaxed tailored trousers, minimal sneakers or loafers. Do not reuse the casual sweater/jeans combination.',
+    'Create a minimal fashion look: clean white/black/stone palette, plain tee or overshirt, relaxed tailored trousers, minimal sneakers or loafers. Do not reuse the source outfit from the person photo.',
 };
 
 const corsHeaders = {
@@ -350,7 +350,7 @@ function buildLookbookPrompt({ style, hasPerson, garmentCount }) {
     styleOutfitRules[style] ||
     `Create a clearly distinct ${style} outfit with a different silhouette, palette, and styling from the other styles.`;
   const personInstruction = hasPerson
-    ? 'Use the FIRST IMAGE as a face/body identity reference ONLY. Extract ONLY: face shape, facial features, hair style and color, skin tone, body proportions. COMPLETELY IGNORE AND DO NOT REPRODUCE the clothing, outfit, or styling shown in the first image. Dress the person from scratch using only the style direction and outfit rule below.'
+    ? 'The FIRST IMAGE is the uploaded user/person reference. The generated person MUST be the same person, not a new model: preserve the exact facial identity, face shape, eyes, nose, mouth, jaw, hair style/color, skin tone, age, body proportions, and overall posture. Use the first image for identity only. Do not copy the clothing from the first image unless it is compatible with the selected style.'
     : 'Create a realistic young adult model appropriate for the wardrobe references.';
   const garmentInstruction =
     garmentCount > 0
@@ -358,7 +358,9 @@ function buildLookbookPrompt({ style, hasPerson, garmentCount }) {
       : 'Create the outfit from scratch based on the style direction.';
 
   return `
-CRITICAL: The person reference image shows a brown sweater and blue jeans. DO NOT reproduce this outfit for any style except "casual". For all other styles, create a completely different outfit from scratch.
+CRITICAL IDENTITY REQUIREMENT: The output must show the exact same person from the uploaded reference image. Do not invent a different face, different age, different hairstyle, or generic fashion model.
+
+CRITICAL STYLING REQUIREMENT: Keep identity, but change the outfit for the selected style. For non-casual styles, do not simply copy the outfit worn in the uploaded person reference.
 
 Generate one vertical full-body fashion lookbook photo for the style: ${style}.
 
@@ -371,9 +373,11 @@ Output requirements:
 - one single full-body person standing in a minimal warm studio with soft side daylight
 - editorial AI stylist / lookbook quality
 - realistic anatomy, realistic face, realistic clothing fit
-- preserve the person's face identity, but change the outfit strongly for this style
+- preserve the uploaded person's face identity as the highest priority
+- do not replace the uploaded person with another person
+- change the outfit strongly for this style
 - create a fresh inspirational outfit variation unique to "${style}"
-- the outfit, palette, shoes, and silhouette must visibly differ from the casual brown sweater + blue jeans reference unless this style is casual
+- the outfit, palette, shoes, and silhouette must visibly match "${style}"
 - no collage, no split screen, no text, no UI, no labels, no extra people
 - clean neutral background, premium ecommerce/editorial mood
 `.trim();

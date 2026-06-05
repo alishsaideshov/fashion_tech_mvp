@@ -59,7 +59,8 @@ class _LookbookPageState extends State<LookbookPage> {
         _personImage = image;
         _result = null;
         _error = null;
-        _status = 'Person photo selected. Demo clothes remain available.';
+        _status =
+            'Person photo selected. Upload clothes or generate styles from scratch.';
       });
     } on MissingPluginException {
       _showPickerPluginMessage();
@@ -108,6 +109,12 @@ class _LookbookPageState extends State<LookbookPage> {
     var generatedCount = 0;
 
     try {
+      final person = _personImage!;
+      final garments = _garmentImages ?? const <AiImageInput>[];
+      final failures = <String>[];
+      var elapsedMs = 0;
+      var model = 'pending';
+
       setState(() {
         _result = AiValidationResult(
           looks: _orderedLooksForStyles(
@@ -125,91 +132,112 @@ class _LookbookPageState extends State<LookbookPage> {
         _status = 'Generating ${styles.length} AI looks...';
       });
 
-      if (_personImage == null) {
+      for (var index = 0; index < styles.length; index += 1) {
+        final style = styles[index];
+        var styleGenerated = false;
+
+        if (!mounted) return;
         setState(() {
-          _error = 'Please upload a person photo first.';
-          _status = 'No person photo uploaded.';
-          _isGenerating = false;
+          _status =
+              'Generating ${_styleLabel(style)} (${index + 1}/${styles.length})...';
         });
-        return;
-      }
 
-      final person = _personImage!;
-      final garments = _garmentImages ?? [];
-      if (!mounted) return;
-      setState(() => _status = 'Generating ${styles.length} looks...');
+        try {
+          final result = await runAiValidation(
+            route: 0,
+            images: garments,
+            personImage: person,
+            styles: [style],
+            onLookReady: (look) {
+              if (!mounted) return;
+              if (!styleGenerated) {
+                generatedCount += 1;
+                styleGenerated = true;
+              }
+              _mergeLookForStyles(
+                looksByStyle: looksByStyle,
+                styles: [style],
+                look: look,
+              );
+              final mergedLooks = _orderedLooksForStyles(
+                looksByStyle: looksByStyle,
+                styles: styles,
+              );
+              setState(() {
+                _result = AiValidationResult(
+                  looks: List.unmodifiable(mergedLooks),
+                  latencyMs: elapsedMs,
+                  summary: '',
+                  prompt: '',
+                  qualityScore: '',
+                  limitations: failures,
+                  generatedImageDataUrl: look.imageDataUrl,
+                  model: look.model,
+                );
+                _status =
+                    'Generated $generatedCount of ${styles.length} looks...';
+              });
+            },
+          );
 
-      final result = await runAiValidation(
-        route: 0,
-        images: garments,
-        personImage: person,
-        styles: styles,
-        onLookReady: (look) {
-          if (!mounted) return;
-          generatedCount += 1;
-          _mergeLookForStyles(
-            looksByStyle: looksByStyle,
-            styles: styles,
-            look: look,
-          );
-          final mergedLooks = _orderedLooksForStyles(
-            looksByStyle: looksByStyle,
-            styles: styles,
-          );
-          setState(() {
-            _result = AiValidationResult(
-              looks: List.unmodifiable(mergedLooks),
-              latencyMs: 0,
-              summary: '',
-              prompt: '',
-              qualityScore: '',
-              limitations: const [],
-              generatedImageDataUrl: null,
-              model: look.model,
+          elapsedMs += result.latencyMs;
+          model = result.model;
+          for (final look in result.looks) {
+            if (!styleGenerated) {
+              generatedCount += 1;
+              styleGenerated = true;
+            }
+            _mergeLookForStyles(
+              looksByStyle: looksByStyle,
+              styles: [style],
+              look: look,
             );
-            _status = 'Generated $generatedCount of ${styles.length} looks...';
-          });
-        },
-      );
+          }
+        } on Object catch (error) {
+          if (!styleGenerated) {
+            failures.add('${_styleLabel(style)}: ${_formatError(error)}');
+          }
+        }
+
+        if (!mounted) return;
+        setState(() {
+          _result = AiValidationResult(
+            looks: List.unmodifiable(
+              _orderedLooksForStyles(
+                looksByStyle: looksByStyle,
+                styles: styles,
+              ),
+            ),
+            latencyMs: elapsedMs,
+            summary: '',
+            prompt: '',
+            qualityScore: '',
+            limitations: failures,
+            generatedImageDataUrl: null,
+            model: model,
+          );
+          _error = failures.isEmpty ? null : failures.join('\n');
+          _status =
+              'Generated $generatedCount of ${styles.length}. Failed ${failures.length}.';
+        });
+      }
 
       if (!mounted) return;
-      for (final look in result.looks) {
-        _mergeLookForStyles(
-          looksByStyle: looksByStyle,
-          styles: styles,
-          look: look,
-        );
-      }
-      final finalLooks = _orderedLooksForStyles(
-        looksByStyle: looksByStyle,
-        styles: styles,
-      );
-      if (finalLooks.isEmpty) {
-        throw StateError(
-          'AI proxy returned 200 but no image looks. Check Railway logs for "Gemini returned no image output".',
-        );
-      }
       setState(() {
-        _result = AiValidationResult(
-          looks: List.unmodifiable(finalLooks),
-          latencyMs: result.latencyMs,
-          summary: result.summary,
-          prompt: result.prompt,
-          qualityScore: result.qualityScore,
-          limitations: result.limitations,
-          generatedImageDataUrl: result.generatedImageDataUrl,
-          model: result.model,
-        );
-        _status =
-            'Done. $generatedCount generated, ${finalLooks.length} style tiles shown.';
+        _status = failures.isEmpty
+            ? 'Done. Generated all ${styles.length} looks.'
+            : 'Done. Generated $generatedCount of ${styles.length}.';
       });
     } on Object catch (error) {
       if (!mounted) return;
-      final message = _formatError(error);
       setState(() {
-        _error = message;
+        _error = _formatError(error);
         _status = 'Generation failed.';
       });
+    } finally {
+      if (mounted) {
+        setState(() => _isGenerating = false);
+      }
     }
   }
 
@@ -931,7 +959,7 @@ class _DebugStatusBox extends StatelessWidget {
   Widget build(BuildContext context) {
     final inputLabel = [
       isUsingDemoPerson ? 'demo person' : 'uploaded person',
-      isUsingDemoGarments ? 'demo clothes' : 'uploaded clothes',
+      isUsingDemoGarments ? 'no clothes' : 'uploaded clothes',
     ].join(' + ');
 
     return Container(
