@@ -4,8 +4,8 @@ const port = Number(process.env.PORT || process.env.AI_PROXY_PORT || 8787);
 const host = process.env.AI_PROXY_HOST || '0.0.0.0';
 const preferredImageModel =
   process.env.GEMINI_IMAGE_MODEL || 'gemini-2.5-flash-image';
-const defaultMaxLooks = Number(process.env.MAX_LOOKS || 3);
-const requestedStyleLimit = 3;
+const defaultMaxLooks = Number(process.env.MAX_LOOKS || 5);
+const requestedStyleLimit = 5;
 const apiKey = process.env.GEMINI_API_KEY;
 
 const defaultStyles = [
@@ -124,6 +124,9 @@ const server = http.createServer(async (request, response) => {
           failures.push(`${style}: ${message}`);
           console.error(`[lookbook] look failed style=${style}`, message);
           response.write(`data: ${JSON.stringify({ type: 'error', style, message })}\n\n`);
+        }
+        if (style !== styles[styles.length - 1]) {
+          await new Promise(r => setTimeout(r, 20_000));
         }
       }
     } finally {
@@ -272,31 +275,36 @@ function limitPartsForModel(parts, model, hasPersonReference) {
 async function generate(model, parts, retries = 2) {
   const cleanModel = model.replace(/^models\//, '');
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${cleanModel}:generateContent?key=${apiKey}`;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts }],
-      generationConfig: {
-        responseModalities: ['TEXT', 'IMAGE'],
-      },
-    }),
-  });
 
-  if ((response.status === 429 || response.status >= 500) && retries > 0) {
-    const delay = 2000 + Math.random() * 1000;
-    console.warn(
-      `[lookbook] ${response.status} temporary error, retrying in ${Math.round(delay)}ms (retries left: ${retries})`,
-    );
-    await new Promise(r => setTimeout(r, delay));
-    return generate(model, parts, retries - 1);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 55_000); // 55s hard limit
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        contents: [{ parts }],
+        generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
+      }),
+    });
+    clearTimeout(timeoutId);
+
+    if ((response.status === 429 || response.status >= 500) && retries > 0) {
+      const delay = 2000 + Math.random() * 1000;
+      await new Promise(r => setTimeout(r, delay));
+      return generate(model, parts, retries - 1);
+    }
+
+    return { ok: response.ok, status: response.status, payload: await response.json() };
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err.name === 'AbortError') {
+      return { ok: false, status: 408, payload: { error: { message: 'Gemini request timed out after 55s' } } };
+    }
+    throw err;
   }
-
-  return {
-    ok: response.ok,
-    status: response.status,
-    payload: await response.json(),
-  };
 }
 
 server.listen(port, host, () => {

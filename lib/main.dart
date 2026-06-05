@@ -42,11 +42,7 @@ class LookbookPage extends StatefulWidget {
 }
 
 class _LookbookPageState extends State<LookbookPage> {
-  final Set<String> _selectedStyles = {
-    'casual',
-    'old money',
-    'minimal fashion',
-  };
+  final Set<String> _selectedStyles = {..._stylePresets};
 
   bool _isGenerating = false;
   AiValidationResult? _result;
@@ -278,10 +274,10 @@ class _LookbookPageState extends State<LookbookPage> {
     setState(() {
       if (_selectedStyles.contains(style)) {
         if (_selectedStyles.length > 1) _selectedStyles.remove(style);
-      } else if (_selectedStyles.length < 3) {
+      } else if (_selectedStyles.length < 5) {
         _selectedStyles.add(style);
       } else {
-        _status = 'Fast demo mode keeps generation to 3 looks.';
+        _status = 'All 5 styles are already selected.';
       }
       _result = null;
       _error = null;

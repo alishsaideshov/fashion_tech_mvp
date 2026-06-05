@@ -27,7 +27,9 @@ void main() {
     await tester.pump(const Duration(seconds: 3));
 
     expect(find.text('Casual'), findsAtLeastNWidgets(1));
+    expect(find.text('Smart Casual'), findsAtLeastNWidgets(1));
     expect(find.text('Old Money'), findsAtLeastNWidgets(1));
+    expect(find.text('Monochrome'), findsAtLeastNWidgets(1));
     expect(find.text('Minimal Fashion'), findsAtLeastNWidgets(1));
   });
 }

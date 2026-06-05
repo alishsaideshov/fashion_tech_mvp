@@ -22,7 +22,7 @@ Future<AiValidationResult> runAiValidation({
           if (styles != null) 'styles': styles,
         }),
       )
-      .timeout(const Duration(minutes: 12));
+      .timeout(const Duration(minutes: 20));
   stopwatch.stop();
 
   if (response.statusCode != 200) {

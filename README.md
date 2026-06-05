@@ -4,7 +4,7 @@ Lightweight concept demo:
 
 - upload a person / face reference photo
 - upload 1-5 wardrobe item photos
-- choose up to 3 style presets in fast demo mode
+- choose up to 5 style presets
 - generate a stylized lookbook with multiple outfit variations
 
 Default styles:
@@ -23,7 +23,7 @@ GEMINI_API_KEY=your_key_here node tooling/ai_proxy.mjs
 
 The proxy generates one image per selected style.
 The default image model is `gemini-2.5-flash-image`, with fallbacks to `gemini-3-pro-image-preview` and the older `gemini-2.0-flash-preview-image-generation`.
-For stability, explicitly selected app styles are always processed up to 3 styles, even if `MAX_LOOKS=1` is still set in Railway.
+For stability, explicitly selected app styles are always processed up to 5 styles, even if `MAX_LOOKS=1` is still set in Railway.
 Generation runs style-by-style so Gemini rate limits do not kill the remaining styles after the first image.
 You can override it if your key has access to another image model:
 
@@ -34,7 +34,7 @@ GEMINI_API_KEY=your_key_here GEMINI_IMAGE_MODEL=gemini-3-pro-image-preview node 
 Optional default volume knob when no styles are sent:
 
 ```sh
-MAX_LOOKS=3 GEMINI_API_KEY=your_key_here node tooling/ai_proxy.mjs
+MAX_LOOKS=5 GEMINI_API_KEY=your_key_here node tooling/ai_proxy.mjs
 ```
 
 Railway deployment:

@@ -25,7 +25,7 @@ Future<AiValidationResult> runAiValidation({
 
     final response = await client
         .send(request)
-        .timeout(const Duration(minutes: 12));
+        .timeout(const Duration(minutes: 20));
 
     final body = StringBuffer();
     final looks = <StyleLook>[];
@@ -41,7 +41,12 @@ Future<AiValidationResult> runAiValidation({
       await for (final line
           in response.stream
               .transform(utf8.decoder)
-              .transform(const LineSplitter())) {
+              .transform(const LineSplitter())
+              .timeout(
+                const Duration(seconds: 90), // per-chunk timeout
+                onTimeout: (sink) =>
+                    sink.close(), // close stream instead of throwing
+              )) {
         if (!line.startsWith('data: ')) continue;
         final decoded = jsonDecode(line.substring(6));
         if (decoded is! Map<String, dynamic>) continue;
