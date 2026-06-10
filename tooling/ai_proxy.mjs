@@ -84,8 +84,10 @@ const server = http.createServer(async (request, response) => {
   try {
     const startedAt = Date.now();
     const body = await readJson(request);
-    const garments = Array.isArray(body.images) ? body.images.slice(0, 5) : [];
     const personImage = body.personImage || null;
+    const garments = (Array.isArray(body.images) ? body.images : [])
+      .filter((image) => !isSameImage(image, personImage))
+      .slice(0, 5);
     const styles = normalizeStyles(body.styles);
 
     console.log(
@@ -342,6 +344,16 @@ function toInlineImage(image) {
       data: image.base64Data,
     },
   };
+}
+
+function isSameImage(image, reference) {
+  return Boolean(
+    image &&
+      reference &&
+      image.base64Data &&
+      reference.base64Data &&
+      image.base64Data === reference.base64Data,
+  );
 }
 
 function buildLookbookPrompt({ style, hasPerson, garmentCount }) {

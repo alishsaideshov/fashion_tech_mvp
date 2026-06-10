@@ -12,13 +12,16 @@ Future<AiValidationResult> runAiValidation({
 }) async {
   final stopwatch = Stopwatch()..start();
   final client = http.Client();
+  final requestImages = images.isNotEmpty
+      ? images
+      : [if (personImage != null) personImage];
 
   try {
     final request = http.Request('POST', Uri.parse(aiProxyUrl))
       ..headers['Content-Type'] = 'application/json'
       ..body = jsonEncode({
         'route': route == 1 ? 'ghost_fit' : 'human_fit',
-        'images': images.map((image) => image.toJson()).toList(),
+        'images': requestImages.map((image) => image.toJson()).toList(),
         if (personImage != null) 'personImage': personImage.toJson(),
         if (styles != null) 'styles': styles,
       });
