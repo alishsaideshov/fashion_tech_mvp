@@ -8,10 +8,10 @@ Future<List<AiImageInput>> pickGarmentImages() async {
   final picker = ImagePicker();
 
   final picked = await picker.pickMultiImage(
-    imageQuality: 60, // was 72
+    imageQuality: 45,
     limit: 5,
-    maxWidth: 1280, // was 1280
-    maxHeight: 1600, // was 1600
+    maxWidth: 960,
+    maxHeight: 1280,
   );
 
   if (picked.isEmpty) return [];
@@ -47,9 +47,9 @@ Future<AiImageInput?> pickSingleImage() async {
   final picker = ImagePicker();
   final picked = await picker.pickImage(
     source: ImageSource.gallery,
-    imageQuality: 72,
-    maxWidth: 1280,
-    maxHeight: 1600,
+    imageQuality: 50,
+    maxWidth: 960,
+    maxHeight: 1280,
   );
 
   if (picked == null) return null;

@@ -1,11 +1,16 @@
 import http from 'node:http';
 
 const port = Number(process.env.PORT || process.env.AI_PROXY_PORT || 8787);
-const host = process.env.AI_PROXY_HOST || '0.0.0.0';
+const isRailway =
+  Boolean(process.env.RAILWAY_SERVICE_ID) ||
+  Boolean(process.env.RAILWAY_PROJECT_ID) ||
+  Boolean(process.env.RAILWAY_ENVIRONMENT_NAME);
+const host = isRailway ? '0.0.0.0' : process.env.AI_PROXY_HOST || '0.0.0.0';
 const preferredImageModel =
   process.env.GEMINI_IMAGE_MODEL || 'gemini-2.5-flash-image';
 const defaultMaxLooks = Number(process.env.MAX_LOOKS || 5);
 const requestedStyleLimit = 5;
+const maxRequestBytes = Number(process.env.MAX_REQUEST_BYTES || 45 * 1024 * 1024);
 const apiKey = process.env.GEMINI_API_KEY;
 
 const defaultStyles = [
@@ -62,6 +67,7 @@ const server = http.createServer(async (request, response) => {
       apiKeyConfigured: Boolean(apiKey),
       defaultModel: preferredImageModel,
       defaultMaxLooks,
+      maxRequestBytes,
       requestedStyleLimit,
       styles: defaultStyles,
     });
@@ -152,7 +158,8 @@ const server = http.createServer(async (request, response) => {
     console.error('[lookbook] failed', error);
     // If headers not sent yet, send JSON error; otherwise end the stream
     if (!response.headersSent) {
-      sendJson(response, 500, { error: error.message || String(error) });
+      const status = error instanceof PayloadTooLargeError ? 413 : 500;
+      sendJson(response, status, { error: error.message || String(error) });
     } else {
       response.write(`data: ${JSON.stringify({ type: 'error', message: error.message })}\n\n`);
       response.end();
@@ -422,23 +429,43 @@ function extractText(payload) {
 function readJson(request) {
   return new Promise((resolve, reject) => {
     let raw = '';
+    let totalBytes = 0;
+    let settled = false;
+
+    const settleReject = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+
     request.on('data', (chunk) => {
-      raw += chunk;
-      if (raw.length > 30 * 1024 * 1024) {
-        request.destroy();
-        reject(new Error('Request body too large.'));
+      if (settled) return;
+      totalBytes += chunk.length;
+      if (totalBytes > maxRequestBytes) {
+        request.resume();
+        settleReject(
+          new PayloadTooLargeError(
+            `Request body is too large (${totalBytes} bytes). Reduce uploaded image size/count or raise MAX_REQUEST_BYTES.`,
+          ),
+        );
+        return;
       }
+      raw += chunk;
     });
     request.on('end', () => {
+      if (settled) return;
       try {
+        settled = true;
         resolve(JSON.parse(raw || '{}'));
       } catch (error) {
-        reject(error);
+        settleReject(error);
       }
     });
-    request.on('error', reject);
+    request.on('error', settleReject);
   });
 }
+
+class PayloadTooLargeError extends Error {}
 
 function sendJson(response, status, payload) {
   send(response, status, JSON.stringify(payload), {
