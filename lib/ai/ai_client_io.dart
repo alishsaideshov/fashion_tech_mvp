@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'ai_client_config.dart';
 import 'ai_validation_models.dart';
@@ -8,6 +10,7 @@ Future<AiValidationResult> runAiValidation({
   required List<AiImageInput> images,
   AiImageInput? personImage,
   List<String>? styles,
+  int? variation,
   void Function(StyleLook look)? onLookReady,
 }) async {
   final stopwatch = Stopwatch()..start();
@@ -24,6 +27,7 @@ Future<AiValidationResult> runAiValidation({
         'images': requestImages.map((image) => image.toJson()).toList(),
         if (personImage != null) 'personImage': personImage.toJson(),
         if (styles != null) 'styles': styles,
+        if (variation != null) 'variation': variation,
       });
 
     final response = await client
@@ -105,17 +109,24 @@ Future<AiValidationResult> runAiValidation({
       onLookReady?.call(look);
     }
     return result;
-  } on Exception catch (error) {
-    final localhostHint = aiProxyUrl.contains('127.0.0.1')
-        ? ' On a physical phone, 127.0.0.1 points to the phone itself. Re-run with your Mac LAN IP, for example --dart-define=AI_PROXY_URL=http://192.168.x.x:8787/api/analyze-outfit.'
-        : '';
-    throw StateError(
-      'Cannot reach AI proxy at $aiProxyUrl. '
-      'Check proxy host, phone network, and GEMINI_API_KEY.$localhostHint '
-      'Details: $error',
-    );
+  } on TimeoutException catch (error) {
+    throw _networkError(error);
+  } on SocketException catch (error) {
+    throw _networkError(error);
+  } on http.ClientException catch (error) {
+    throw _networkError(error);
   } finally {
     client.close();
     stopwatch.stop();
   }
+}
+
+StateError _networkError(Object error) {
+  final localhostHint = aiProxyUrl.contains('127.0.0.1')
+      ? ' On a physical phone, 127.0.0.1 points to the phone itself. Re-run with your Mac LAN IP, for example --dart-define=AI_PROXY_URL=http://192.168.x.x:8787/api/analyze-outfit.'
+      : '';
+  return StateError(
+    'Cannot reach AI proxy at $aiProxyUrl. '
+    'Check proxy host and phone network.$localhostHint Details: $error',
+  );
 }

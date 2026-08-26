@@ -6,6 +6,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "start": "node tooling/ai_proxy.mjs"
+    "start": "node tooling/ai_proxy.mjs",
+    "test": "node --test tooling/ai_proxy.test.mjs"
   }
 }

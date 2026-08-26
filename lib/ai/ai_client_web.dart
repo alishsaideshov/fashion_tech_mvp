@@ -8,6 +8,7 @@ Future<AiValidationResult> runAiValidation({
   required List<AiImageInput> images,
   AiImageInput? personImage,
   List<String>? styles,
+  int? variation,
   void Function(StyleLook look)? onLookReady,
 }) async {
   final stopwatch = Stopwatch()..start();
@@ -23,6 +24,7 @@ Future<AiValidationResult> runAiValidation({
           'images': requestImages.map((image) => image.toJson()).toList(),
           if (personImage != null) 'personImage': personImage.toJson(),
           if (styles != null) 'styles': styles,
+          if (variation != null) 'variation': variation,
         }),
       )
       .timeout(const Duration(minutes: 20));

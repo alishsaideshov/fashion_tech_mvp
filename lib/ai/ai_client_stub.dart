@@ -5,6 +5,7 @@ Future<AiValidationResult> runAiValidation({
   required List<AiImageInput> images,
   AiImageInput? personImage,
   List<String>? styles,
+  int? variation,
   void Function(StyleLook look)? onLookReady,
 }) async {
   throw UnsupportedError('No AI client available for this platform.');

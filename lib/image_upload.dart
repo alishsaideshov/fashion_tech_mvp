@@ -2,6 +2,26 @@ import 'dart:convert';
 import 'package:fashion_tech_mvp/ai/ai_validation_models.dart';
 import 'package:image_picker/image_picker.dart';
 
+const maxWardrobeImages = 5;
+
+List<AiImageInput> mergeWardrobeImages(
+  List<AiImageInput> existing,
+  List<AiImageInput> selected,
+) {
+  final seen = <String>{};
+  final merged = [
+    for (final image in [...existing, ...selected])
+      if (seen.add(image.base64Data)) image,
+  ];
+  if (merged.length > maxWardrobeImages) {
+    throw StateError(
+      'Up to $maxWardrobeImages wardrobe photos are supported. '
+      'Remove a photo or select fewer new photos. Your selection was not changed.',
+    );
+  }
+  return merged;
+}
+
 /// Открывает системный file picker на web, iOS и Android.
 /// Возвращает пустой список если пользователь закрыл диалог.
 Future<List<AiImageInput>> pickGarmentImages() async {
@@ -9,7 +29,7 @@ Future<List<AiImageInput>> pickGarmentImages() async {
 
   final picked = await picker.pickMultiImage(
     imageQuality: 45,
-    limit: 5,
+    limit: maxWardrobeImages,
     maxWidth: 960,
     maxHeight: 1280,
   );
