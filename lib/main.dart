@@ -123,6 +123,13 @@ class _LookbookPageState extends State<LookbookPage> {
       return;
     }
 
+    if (garments.length > maxWardrobeImages) {
+      setState(
+        () => _error = 'Select at most $maxWardrobeImages wardrobe photos.',
+      );
+      return;
+    }
+
     setState(() {
       _isGenerating = true;
       _result = null;
@@ -130,9 +137,8 @@ class _LookbookPageState extends State<LookbookPage> {
       _status = 'Preparing inputs...';
     });
 
-    final styles = List<String>.unmodifiable(_stylePresets);
-    final looks = _pendingLooksForStyles(styles);
-    final totalLooks = styles.length * _looksPerStyle;
+    final looks = _pendingLooksForGarments(garments);
+    final totalLooks = garments.length;
     var generatedCount = 0;
 
     try {
@@ -155,92 +161,96 @@ class _LookbookPageState extends State<LookbookPage> {
         _status = 'Generating $totalLooks wardrobe-based looks...';
       });
 
-      for (var styleIndex = 0; styleIndex < styles.length; styleIndex += 1) {
-        final style = styles[styleIndex];
-        for (var variation = 1; variation <= _looksPerStyle; variation += 1) {
-          var lookGenerated = false;
-          final sequence = styleIndex * _looksPerStyle + variation;
+      for (var itemIndex = 0; itemIndex < garments.length; itemIndex += 1) {
+        final garment = garments[itemIndex];
+        var lookGenerated = false;
+        final sequence = itemIndex + 1;
 
-          if (!mounted) return;
-          setState(() {
-            _status =
-                'Generating ${_styleLabel(style)} $variation/$_looksPerStyle ($sequence/$totalLooks)...';
-          });
+        if (!mounted) return;
+        setState(() {
+          _status = 'Generating item $sequence/$totalLooks: ${garment.name}...';
+        });
 
-          try {
-            final result = await runAiValidation(
-              route: 0,
-              images: garments,
-              personImage: person,
-              styles: [style],
-              variation: variation,
-              onLookReady: (look) {
-                if (!mounted) return;
-                if (!lookGenerated) {
-                  generatedCount += 1;
-                  lookGenerated = true;
-                }
-                _mergeLook(
-                  looks: looks,
-                  style: style,
-                  variation: variation,
-                  look: look,
-                );
-                setState(() {
-                  _result = AiValidationResult(
-                    looks: List.unmodifiable(List<StyleLook>.of(looks)),
-                    latencyMs: elapsedMs,
-                    summary: '',
-                    prompt: '',
-                    qualityScore: '',
-                    limitations: failures,
-                    generatedImageDataUrl: look.imageDataUrl,
-                    model: look.model,
-                  );
-                  _status = 'Generated $generatedCount of $totalLooks looks...';
-                });
-              },
-            );
-
-            elapsedMs += result.latencyMs;
-            model = result.model;
-            for (final look in result.looks) {
-              if (!lookGenerated) {
-                generatedCount += 1;
-                lookGenerated = true;
-              }
-              _mergeLook(
-                looks: looks,
-                style: style,
-                variation: variation,
-                look: look,
-              );
-            }
-          } on Object catch (error) {
-            if (!lookGenerated) {
-              failures.add(
-                '${_styleLabel(style)} $variation: ${_formatError(error)}',
-              );
-            }
-          }
-
-          if (!mounted) return;
+        void acceptLook(StyleLook look) {
+          // A streamed look is also returned in the final result. Accept it once.
+          if (!mounted || lookGenerated || look.imageDataUrl.isEmpty) return;
+          generatedCount += 1;
+          lookGenerated = true;
+          _mergeLook(
+            looks: looks,
+            index: itemIndex,
+            garment: garment,
+            look: look,
+          );
           setState(() {
             _result = AiValidationResult(
-              looks: List.unmodifiable(List<StyleLook>.of(looks)),
+              looks: List.unmodifiable(looks),
               latencyMs: elapsedMs,
               summary: '',
               prompt: '',
               qualityScore: '',
-              limitations: failures,
-              generatedImageDataUrl: null,
-              model: model,
+              limitations: List.unmodifiable(failures),
+              generatedImageDataUrl: look.imageDataUrl,
+              model: look.model,
             );
-            _error = failures.isEmpty ? null : failures.join('\n');
-            _status =
-                'Generated $generatedCount of $totalLooks. Failed ${failures.length}.';
+            _status = 'Generated $generatedCount of $totalLooks looks...';
           });
         }
+
+        try {
+          final result = await runAiValidation(
+            route: 0,
+            images: [garment],
+            personImage: person,
+            singleGarment: true,
+            onLookReady: acceptLook,
+          );
+
+          elapsedMs += result.latencyMs;
+          model = result.model;
+          for (final look in result.looks) {
+            acceptLook(look);
+          }
+          if (!lookGenerated && mounted) {
+            throw StateError('No image returned for this garment.');
+          }
+        } on Object catch (error) {
+          if (!lookGenerated) {
+            failures.add(
+              'Item $sequence (${garment.name}): ${_formatError(error)}',
+            );
+            _mergeLook(
+              looks: looks,
+              index: itemIndex,
+              garment: garment,
+              look: StyleLook(
+                style: 'garment try-on',
+                variation: sequence,
+                imageDataUrl: '',
+                prompt: '',
+                model: 'failed',
+                latencyMs: 0,
+              ),
+            );
+          }
+        }
+
+        if (!mounted) return;
+        setState(() {
+          _result = AiValidationResult(
+            looks: List.unmodifiable(List<StyleLook>.of(looks)),
+            latencyMs: elapsedMs,
+            summary: '',
+            prompt: '',
+            qualityScore: '',
+            limitations: failures,
+            generatedImageDataUrl: null,
+            model: model,
+          );
+          _error = failures.isEmpty ? null : failures.join('\n');
+          _status =
+              'Generated $generatedCount of $totalLooks. Failed ${failures.length}.';
+        });
       }
 
       if (!mounted) return;
@@ -262,45 +272,36 @@ class _LookbookPageState extends State<LookbookPage> {
     }
   }
 
-  List<StyleLook> _pendingLooksForStyles(List<String> styles) {
+  List<StyleLook> _pendingLooksForGarments(List<AiImageInput> garments) {
     return [
-      for (final style in styles)
-        for (var variation = 1; variation <= _looksPerStyle; variation += 1)
-          StyleLook(
-            style: style,
-            variation: variation,
-            imageDataUrl: '',
-            prompt: 'Waiting for AI generation.',
-            model: 'pending',
-            latencyMs: 0,
-          ),
+      for (var index = 0; index < garments.length; index++)
+        StyleLook(
+          style: 'garment try-on',
+          garmentName: garments[index].name,
+          variation: index + 1,
+          imageDataUrl: '',
+          prompt: 'Waiting for AI generation.',
+          model: 'pending',
+          latencyMs: 0,
+        ),
     ];
   }
 
   void _mergeLook({
     required List<StyleLook> looks,
-    required String style,
-    required int variation,
+    required int index,
+    required AiImageInput garment,
     required StyleLook look,
   }) {
-    final normalizedLook = StyleLook(
-      style: style,
-      variation: variation,
+    looks[index] = StyleLook(
+      style: 'garment try-on',
+      garmentName: garment.name,
+      variation: index + 1,
       imageDataUrl: look.imageDataUrl,
       prompt: look.prompt,
       model: look.model,
       latencyMs: look.latencyMs,
     );
-    final index = looks.indexWhere(
-      (candidate) =>
-          _styleKey(candidate.style) == _styleKey(style) &&
-          candidate.variation == variation,
-    );
-    if (index == -1) {
-      looks.add(normalizedLook);
-    } else {
-      looks[index] = normalizedLook;
-    }
   }
 
   String _formatError(Object error) {
@@ -351,7 +352,7 @@ class _LookbookPageState extends State<LookbookPage> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Choose your photo and wardrobe. AI builds three looks for every style automatically.',
+                    'Your wardrobe lookbook',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                       color: _muted,
                       letterSpacing: 0,
@@ -509,13 +510,10 @@ class _ControlPanel extends StatelessWidget {
           const SizedBox(height: 18),
           const _PanelTitle(
             icon: Icons.auto_awesome_outlined,
-            title: 'Automatic styles',
+            title: 'Virtual try-on',
           ),
           const SizedBox(height: 12),
-          const _AutomaticStyleSummary(
-            styleCount: 5,
-            looksPerStyle: _looksPerStyle,
-          ),
+          _GenerationSummary(itemCount: garmentImages?.length ?? 0),
           const SizedBox(height: 16),
           SizedBox(
             width: double.infinity,
@@ -550,14 +548,10 @@ class _ControlPanel extends StatelessWidget {
   }
 }
 
-class _AutomaticStyleSummary extends StatelessWidget {
-  const _AutomaticStyleSummary({
-    required this.styleCount,
-    required this.looksPerStyle,
-  });
+class _GenerationSummary extends StatelessWidget {
+  const _GenerationSummary({required this.itemCount});
 
-  final int styleCount;
-  final int looksPerStyle;
+  final int itemCount;
 
   @override
   Widget build(BuildContext context) {
@@ -575,7 +569,9 @@ class _AutomaticStyleSummary extends StatelessWidget {
           const SizedBox(width: 9),
           Expanded(
             child: Text(
-              '$styleCount styles, up to $looksPerStyle looks each',
+              itemCount == 1
+                  ? '1 item, 1 image'
+                  : '$itemCount items, $itemCount images',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: _ink,
                 fontWeight: FontWeight.w700,
@@ -617,16 +613,10 @@ class _LookbookPanel extends StatelessWidget {
             LookList(looks: looks),
             if (isGenerating) ...[
               const SizedBox(height: 12),
-              _StateBox(
-                icon: Icons.hourglass_top,
-                title: 'Real AI still running',
-                body:
-                    'Preview images are visible now. They will be replaced if the AI returns generated looks.',
-                color: _teal,
-              ),
+              const LinearProgressIndicator(),
             ],
           ] else if (isGenerating) ...[
-            const _GeneratingGrid(styles: _stylePresets),
+            const Center(child: CircularProgressIndicator()),
           ] else ...[
             if (error != null) ...[
               _StateBox(
@@ -653,71 +643,6 @@ class _LookbookPanel extends StatelessWidget {
   }
 }
 
-class _GeneratingGrid extends StatelessWidget {
-  const _GeneratingGrid({required this.styles});
-
-  final List<String> styles;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final columns = constraints.maxWidth >= 700 ? 3 : 2;
-        return GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: styles.length,
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: columns,
-            mainAxisSpacing: 10,
-            crossAxisSpacing: 10,
-            childAspectRatio: 0.72,
-          ),
-          itemBuilder: (context, index) {
-            return _GeneratingCard(style: styles[index]);
-          },
-        );
-      },
-    );
-  }
-}
-
-class _GeneratingCard extends StatelessWidget {
-  const _GeneratingCard({required this.style});
-
-  final String style;
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: _cream,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: _border),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const CircularProgressIndicator(strokeWidth: 2),
-            const SizedBox(height: 12),
-            Text(
-              _styleLabel(style),
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                color: _ink,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class LookList extends StatelessWidget {
   const LookList({super.key, required this.looks});
 
@@ -725,74 +650,27 @@ class LookList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final styleGroups = [
-      for (final style in _stylePresets)
-        (
-          style: style,
-          looks:
-              looks
-                  .where((look) => _styleKey(look.style) == _styleKey(style))
-                  .toList()
-                ..sort((a, b) => a.variation.compareTo(b.variation)),
-        ),
-    ];
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (
-          var groupIndex = 0;
-          groupIndex < styleGroups.length;
-          groupIndex += 1
-        ) ...[
-          if (groupIndex > 0) const SizedBox(height: 22),
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  _styleLabel(styleGroups[groupIndex].style),
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: _ink,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 0,
-                  ),
-                ),
-              ),
-              Text(
-                '${styleGroups[groupIndex].looks.where((look) => look.imageDataUrl.isNotEmpty).length}/$_looksPerStyle',
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  color: _muted,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0,
-                ),
-              ),
-            ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 760
+            ? 3
+            : constraints.maxWidth >= 480
+            ? 2
+            : 1;
+        final tileWidth = (constraints.maxWidth - (columns - 1) * 10) / columns;
+        return GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: looks.length,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+            mainAxisExtent: tileWidth * 4 / 3 + 110,
           ),
-          const SizedBox(height: 10),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final columns = constraints.maxWidth >= 760
-                  ? 3
-                  : constraints.maxWidth >= 480
-                  ? 2
-                  : 1;
-              return GridView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: styleGroups[groupIndex].looks.length,
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: columns,
-                  mainAxisSpacing: 10,
-                  crossAxisSpacing: 10,
-                  childAspectRatio: 0.62,
-                ),
-                itemBuilder: (context, index) =>
-                    _LookCard(look: styleGroups[groupIndex].looks[index]),
-              );
-            },
-          ),
-        ],
-      ],
+          itemBuilder: (context, index) => _LookCard(look: looks[index]),
+        );
+      },
     );
   }
 }
@@ -833,7 +711,7 @@ class _LookCard extends StatelessWidget {
                 Positioned(
                   left: 10,
                   top: 10,
-                  child: _StylePhotoTile(label: 'Look ${look.variation}'),
+                  child: _StylePhotoTile(label: 'Item ${look.variation}'),
                 ),
               ],
             ),
@@ -844,8 +722,8 @@ class _LookCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '${_styleLabel(look.style)} - Look ${look.variation}',
-                  maxLines: 1,
+                  look.garmentName ?? 'Item ${look.variation}',
+                  maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.titleSmall?.copyWith(
                     color: _ink,
@@ -1276,19 +1154,6 @@ ButtonStyle _outlineButtonStyle() {
   );
 }
 
-String _styleLabel(String style) {
-  return style
-      .split(' ')
-      .map(
-        (word) => word.isEmpty
-            ? word
-            : '${word[0].toUpperCase()}${word.substring(1)}',
-      )
-      .join(' ');
-}
-
-String _styleKey(String style) => style.trim().toLowerCase();
-
 Uint8List? _tryDecodeDataUrl(String value) {
   try {
     return Uri.parse(value).data?.contentAsBytes();
@@ -1313,16 +1178,6 @@ class GarmentItem {
   final String note;
   final String asset;
 }
-
-const _stylePresets = [
-  'casual',
-  'smart casual',
-  'old money',
-  'monochrome',
-  'minimal fashion',
-];
-
-const _looksPerStyle = 3;
 
 const _background = Color(0xFFF5F1EA);
 const _cream = Color(0xFFFBF8F2);

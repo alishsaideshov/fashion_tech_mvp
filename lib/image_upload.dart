@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'package:fashion_tech_mvp/ai/ai_validation_models.dart';
 import 'package:image_picker/image_picker.dart';
 
-const maxWardrobeImages = 5;
+const maxWardrobeImages = 3;
 
 List<AiImageInput> mergeWardrobeImages(
   List<AiImageInput> existing,

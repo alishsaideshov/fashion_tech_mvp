@@ -127,8 +127,57 @@ test('an explicitly selected wardrobe photo is kept even if also used as person 
     [person, person, garments[0]].map((input) => input.base64Data));
 });
 
-test('health identifies the all-wardrobe server version', async () => {
+test('single-garment mode generates one exact try-on even if styles and variations are supplied', async (t) => {
+  const attempts = [];
+  t.mock.method(globalThis, 'fetch', async (_url, init) => {
+    attempts.push(JSON.parse(init.body).contents[0].parts);
+    return success();
+  });
+  for (const garment of garments.slice(0, 3)) {
+    const result = looksFrom(await request({
+      mode: 'single_garment',
+      personImage: person,
+      images: [garment],
+      styles: ['casual', 'smart casual', 'old money', 'monochrome', 'minimal fashion'],
+      variation: 3,
+    }));
+    assert.equal(result.length, 1);
+    const [look] = result;
+    assert.equal(look.style, 'garment try-on');
+    assert.equal(look.variation, 1);
+    assert.equal(look.garmentName, garment.name);
+    assert.equal(look.referenceCount, 2);
+    assert.equal(look.garmentCount, 1);
+    assert.equal(look.focusGarmentNumber, 1);
+    assert.match(look.prompt, /exact garment in WARDROBE_1/);
+    assert.match(look.prompt, /Do not redesign, recolor, replace, or restyle/);
+    assert.doesNotMatch(look.prompt, /variation \d of 3|Style direction:|WARDROBE_2/);
+    assert.deepEqual(attempts.at(-1).filter((part) => part.inline_data).map((part) => part.inline_data.data),
+      [person.base64Data, garment.base64Data]);
+    assert.equal(attempts.at(-1)[0].text, look.prompt);
+  }
+  assert.equal(attempts.length, 3);
+});
+
+test('single-garment mode with no styles still generates only one image', async (t) => {
+  const fetchMock = t.mock.method(globalThis, 'fetch', async () => success());
+  const result = looksFrom(await request({ mode: 'single_garment', personImage: person, images: [garments[0]] }));
+  assert.equal(result.length, 1);
+  assert.equal(fetchMock.mock.callCount(), 1);
+});
+
+test('single-garment mode rejects missing or multiple references before calling Gemini', async (t) => {
+  const fetchMock = t.mock.method(globalThis, 'fetch', async () => { throw new Error('Unexpected Gemini request'); });
+  for (const images of [[], garments.slice(0, 2), garments.slice(0, 3)]) {
+    assert.equal((await request({ mode: 'single_garment', personImage: person, images })).status, 400);
+  }
+  assert.equal((await request({ mode: 'single_garment', images: [garments[0]] })).status, 400);
+  assert.equal(fetchMock.mock.callCount(), 0);
+});
+
+test('health identifies support for single-garment try-on', async () => {
   const response = await request(undefined, '/health');
   assert.equal(response.status, 200);
   assert.equal(JSON.parse(response.text).inputPolicy, 'all-wardrobe-v1');
+  assert.ok(JSON.parse(response.text).generationModes.includes('single_garment'));
 });

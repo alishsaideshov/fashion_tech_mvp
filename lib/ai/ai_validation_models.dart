@@ -42,6 +42,7 @@ class AiValidationResult {
       looks.add(
         StyleLook(
           style: json['style'] as String? ?? 'Generated look',
+          garmentName: json['garmentName'] as String?,
           variation: json['variation'] as int? ?? 1,
           imageDataUrl: generatedImageDataUrl,
           prompt: json['prompt'] as String? ?? '',
@@ -78,6 +79,7 @@ class AiValidationResult {
 @immutable
 class StyleLook {
   const StyleLook({
+    this.garmentName,
     required this.style,
     required this.variation,
     required this.imageDataUrl,
@@ -88,6 +90,7 @@ class StyleLook {
 
   factory StyleLook.fromJson(Map<String, Object?> json) {
     return StyleLook(
+      garmentName: json['garmentName'] as String?,
       style: json['style'] as String? ?? 'Look',
       variation: json['variation'] as int? ?? 1,
       imageDataUrl: json['imageDataUrl'] as String? ?? '',
@@ -98,6 +101,7 @@ class StyleLook {
   }
 
   final String style;
+  final String? garmentName;
   final int variation;
   final String imageDataUrl;
   final String prompt;

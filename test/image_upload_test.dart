@@ -32,19 +32,11 @@ void main() {
     () {
       final existing = [photo(1), photo(2)];
       expect(
-        () => mergeWardrobeImages(existing, [
-          photo(3),
-          photo(4),
-          photo(5),
-          photo(6),
-        ]),
+        () => mergeWardrobeImages(existing, [photo(3), photo(4)]),
         throwsStateError,
       );
       expect(existing.length, 2);
-      expect(
-        mergeWardrobeImages(existing, [photo(3), photo(4), photo(5)]).length,
-        5,
-      );
+      expect(mergeWardrobeImages(existing, [photo(3)]).length, 3);
     },
   );
 }

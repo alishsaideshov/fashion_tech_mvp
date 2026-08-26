@@ -80,6 +80,7 @@ export const server = http.createServer(async (request, response) => {
       maxVariationsPerStyle: 3,
       maxWardrobeImages,
       inputPolicy: 'all-wardrobe-v1',
+      generationModes: ['lookbook', 'single_garment'],
       styles: defaultStyles,
     });
     return;
@@ -103,8 +104,9 @@ export const server = http.createServer(async (request, response) => {
     const body = await readJson(request);
     const personImage = body.personImage || null;
     const garments = Array.isArray(body.images) ? body.images : [];
-    const styles = normalizeStyles(body.styles);
-    const variation = normalizeVariation(body.variation);
+    const singleGarment = body.mode === 'single_garment';
+    const styles = singleGarment ? ['garment try-on'] : normalizeStyles(body.styles);
+    const variation = singleGarment ? 1 : normalizeVariation(body.variation);
 
     console.log(
       `[lookbook] request person=${Boolean(personImage)} garments=${garments.length} styles=${styles.join(', ')} variation=${variation}`,
@@ -127,6 +129,13 @@ export const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (singleGarment && garments.length !== 1) {
+      sendJson(response, 400, {
+        error: 'Single-garment try-on requires exactly one wardrobe photo per request. No photos were processed.',
+      });
+      return;
+    }
+
     // Stream each look as it finishes.
     response.writeHead(200, {
       ...corsHeaders,
@@ -145,7 +154,7 @@ export const server = http.createServer(async (request, response) => {
       for (const style of styles) {
         response.write(`data: ${JSON.stringify({ type: 'started', style, variation })}\n\n`);
         try {
-          const look = await generateLook({ style, variation, personImage, garments });
+          const look = await generateLook({ style, variation, personImage, garments, singleGarment });
           completed++;
           console.log(`[lookbook] look done style=${style} latencyMs=${look.latencyMs}`);
           response.write(`data: ${JSON.stringify({ type: 'look', look })}\n\n`);
@@ -189,12 +198,12 @@ export const server = http.createServer(async (request, response) => {
   }
 });
 
-async function generateLook({ style, variation, personImage, garments }) {
+async function generateLook({ style, variation, personImage, garments, singleGarment }) {
   const lookStartedAt = Date.now();
   // Rotate the anchor across the whole lookbook, not always the first garment.
   const styleIndex = Math.max(0, defaultStyles.indexOf(style));
   const focusGarmentNumber = ((styleIndex * 3 + variation - 1) % garments.length) + 1;
-  const prompt = buildLookbookPrompt({
+  const prompt = singleGarment ? buildSingleGarmentPrompt() : buildLookbookPrompt({
     style,
     variation,
     hasPerson: Boolean(personImage),
@@ -225,6 +234,7 @@ async function generateLook({ style, variation, personImage, garments }) {
     garmentCount: garments.length,
     referenceCount: garments.length + 1,
     focusGarmentNumber,
+    ...(singleGarment ? { garmentName: garments[0].name } : {}),
     prompt,
     model,
     latencyMs: Date.now() - lookStartedAt,
@@ -379,6 +389,21 @@ function toInlineImage(image) {
       data: image.base64Data,
     },
   };
+}
+
+function buildSingleGarmentPrompt() {
+  return `
+Generate exactly ONE realistic virtual try-on photo of the uploaded person wearing the exact garment in WARDROBE_1.
+
+There are exactly two reference images:
+- PERSON (first image): the person's identity reference. Preserve the same face, facial features, hair, skin tone, age, and visible body proportions. Never substitute a different person or copy the original clothing in place of WARDROBE_1.
+- WARDROBE_1 (second image): the ONLY target garment. Put this exact garment on the person. It is a product reference, not style inspiration. If someone is wearing it in the reference, use only their garment, not their identity.
+
+Preserve the garment's exact color, pattern, print, logos, material, cut, length, neckline, sleeves, fastenings, and visible details. Only adapt its fit, folds, and drape naturally to the person. Do not redesign, recolor, replace, or restyle it. Do not choose a fashion style or create alternative outfits.
+Use unobtrusive neutral complementary basics only where essential for a complete, fully clothed outfit. They must not replace or hide the target garment. Show the entire target garment clearly on the person, with realistic anatomy and natural lighting against a clean neutral background.
+
+Return one image with one person and this one garment try-on. No variations, collage, split screen, extra people, text, labels, or UI.
+`.trim();
 }
 
 function buildLookbookPrompt({ style, variation, hasPerson, garmentCount, focusGarmentNumber }) {

@@ -9,8 +9,14 @@ Future<AiValidationResult> runAiValidation({
   AiImageInput? personImage,
   List<String>? styles,
   int? variation,
+  bool singleGarment = false,
   void Function(StyleLook look)? onLookReady,
 }) async {
+  if (singleGarment && (personImage == null || images.length != 1)) {
+    throw StateError(
+      'Single-garment try-on requires one person and one garment photo.',
+    );
+  }
   final stopwatch = Stopwatch()..start();
   final requestImages = images.isNotEmpty
       ? images
@@ -23,8 +29,12 @@ Future<AiValidationResult> runAiValidation({
           'route': route == 1 ? 'ghost_fit' : 'human_fit',
           'images': requestImages.map((image) => image.toJson()).toList(),
           if (personImage != null) 'personImage': personImage.toJson(),
-          if (styles != null) 'styles': styles,
-          if (variation != null) 'variation': variation,
+          if (singleGarment) 'mode': 'single_garment',
+          // Keep older proxies from defaulting to a batch of five styles.
+          if (singleGarment || styles != null)
+            'styles': singleGarment ? ['garment try-on'] : styles,
+          if (singleGarment || variation != null)
+            'variation': singleGarment ? 1 : variation,
         }),
       )
       .timeout(const Duration(minutes: 20));
